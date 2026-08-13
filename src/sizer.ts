@@ -6,16 +6,13 @@ import type { EdgeSignal, SizedTrade } from "./types.js";
  *   f* = (p * b - q) / b
  * where p = probability of winning, q = 1-p, b = net odds received.
  * For a share priced at `price` that pays 1 token if correct, b = (1-price)/price.
- *
- * We never bet full Kelly - a single LLM estimate isn't trustworthy enough
- * for that. maxKellyFraction scales it down hard, and the absolute caps
- * below are the real backstop against a bad estimate blowing up the account.
  */
 function kellyFraction(probability: number, price: number): number {
-  if (price <= 0 || price >= 1) return 0;
+  if (price <= 0 || price >= 1 || isNaN(price) || isNaN(probability)) return 0;
   const b = (1 - price) / price;
+  if (b <= 0) return 0;
   const f = (probability * b - (1 - probability)) / b;
-  return Math.max(0, f);
+  return Math.max(0, isNaN(f) ? 0 : f);
 }
 
 export function sizeTrade(
@@ -25,7 +22,10 @@ export function sizeTrade(
 ): SizedTrade | null {
   if (signal.direction !== "buy") return null;
 
-  const marketPrice = signal.market.outcomes.find((o) => o.id === signal.outcomeId)!.currentPrice;
+  const outcome = signal.market.outcomes.find((o) => o.id === signal.outcomeId);
+  if (!outcome || outcome.currentPrice <= 0 || outcome.currentPrice >= 1) return null;
+
+  const marketPrice = outcome.currentPrice;
   const rawKelly = kellyFraction(signal.estimate.probability, marketPrice);
   const scaledKelly = rawKelly * config.strategy.maxKellyFraction;
 
@@ -38,7 +38,7 @@ export function sizeTrade(
     Math.max(0, config.strategy.maxDailyExposure - dailyExposureUsed)
   );
 
-  if (sizeInTokens < 1) return null; // not worth the gas for a dust-sized trade
+  if (sizeInTokens < 1 || isNaN(sizeInTokens)) return null; // not worth the gas for a dust-sized trade
 
   return {
     marketId: signal.marketId,
