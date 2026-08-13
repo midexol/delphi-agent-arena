@@ -18,18 +18,12 @@ export const config = {
     walletPrivateKey: requireEnv("WALLET_PRIVATE_KEY"),
     apiAccessKey: requireEnv("DELPHI_API_ACCESS_KEY"),
   },
-  anthropic: {
-    apiKey: requireEnv("ANTHROPIC_API_KEY"),
-    model: "claude-sonnet-4-6",
-  },
   strategy: {
     // Minimum |estimate - marketPrice| required to act at all.
-    // This is the agent's main defense against noisy/overconfident estimates.
     minEdgeThreshold: numEnv("MIN_EDGE_THRESHOLD", 0.08),
     // Caps the fraction of full-Kelly sizing we ever actually bet.
-    // Full Kelly is too aggressive for a single-model estimate; we scale it down hard.
     maxKellyFraction: numEnv("MAX_KELLY_FRACTION", 0.25),
-    // Hard ceilings, independent of Kelly math, so one bad estimate can't wipe the account.
+    // Hard ceilings, independent of Kelly math
     maxExposurePerMarket: numEnv("MAX_EXPOSURE_PER_MARKET", 50),
     maxDailyExposure: numEnv("MAX_DAILY_EXPOSURE", 200),
   },
