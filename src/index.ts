@@ -5,6 +5,7 @@ import { sizeTrade } from "./sizer.js";
 import { executeTrade, redeemSettledPositions } from "./executor.js";
 import { logDecision } from "./logger.js";
 import { createPublicClient, http, parseAbi, formatEther } from "viem";
+import type { EdgeSignal } from "./types.js";
 
 const TST_TOKEN_ADDRESS = "0x8A2d75753362Eb5D5669a2c22cbf394b26a0571F";
 const ERC20_ABI = parseAbi([
@@ -82,7 +83,7 @@ async function getBankroll(): Promise<number> {
 }
 
 export async function runOnce(): Promise<void> {
-  console.log("=== Delphi Agent Arena — Trading Run ===");
+  console.log("=== Delphi Agent Arena — High-Precision Pure-Gain Run ===");
   console.log("Time:", new Date().toISOString());
 
   console.log("\n1. Sweeping & redeeming settled/expired positions...");
@@ -93,15 +94,35 @@ export async function runOnce(): Promise<void> {
   const markets = await scanMarkets();
   console.log(`Found ${markets.length} market(s) to evaluate.\n`);
 
-  console.log("3. Fetching bankroll and gas balances...");
+  console.log("3. Fetching bankroll, gas, and existing open positions...");
   const bankroll = await getBankroll();
   let dailyExposureUsed = 0;
 
-  console.log("\n4. Evaluating markets...");
+  const client = getDelphiClient();
+  const { address: walletAddr } = await client.getSigner();
+  const { positions: openPositions } = await client.listPositions({ wallet: walletAddr, redeemedOrLiquidated: false });
+
+  // Map existing active position market proxy addresses
+  const activeMarketProxies = new Set(
+    (openPositions || [])
+      .filter((p) => BigInt(p.shares || "0") > 0n)
+      .map((p) => p.marketProxy.toLowerCase())
+  );
+
+  console.log("\n4. Evaluating markets (Strict Single-Outcome Max-Edge Execution)...");
   for (const market of markets) {
     try {
       console.log(`\nEvaluating Market: [${market.id}] "${market.question}"`);
 
+      // Skip if we already hold an active position in this market to avoid duplicate over-exposure
+      if (activeMarketProxies.has(market.id.toLowerCase())) {
+        console.log(`  [SKIP MARKET] Already hold an active position in market ${market.id}.`);
+        continue;
+      }
+
+      const signals: { signal: EdgeSignal; outcome: any }[] = [];
+
+      // Step 1: Evaluate all outcomes for this market
       for (const outcome of market.outcomes) {
         const searchContext = await gatherSearchContext(market.question);
         const estimate = await estimateOutcome(market, outcome, searchContext);
@@ -113,67 +134,60 @@ export async function runOnce(): Promise<void> {
           `Signal: ${signal.direction.toUpperCase()}`
         );
 
-        if (signal.direction === "skip") {
-          await logDecision({
-            timestamp: new Date().toISOString(),
-            marketId: market.id,
-            outcomeId: outcome.id,
-            question: market.question,
-            estimateProbability: estimate.probability,
-            marketPriceAtTrade: outcome.currentPrice,
-            edge: signal.edge,
-            sizeInTokens: 0,
-            reasoning: estimate.reasoning,
-            status: "skipped",
-            skipReason: estimate.agreedWithSecondPass
-              ? "edge or confidence below threshold"
-              : "estimator passes disagreed",
-          });
-          continue;
+        if (signal.direction === "buy") {
+          signals.push({ signal, outcome });
         }
+      }
 
-        const sized = sizeTrade(signal, bankroll, dailyExposureUsed);
-        if (!sized) {
-          await logDecision({
-            timestamp: new Date().toISOString(),
-            marketId: market.id,
-            outcomeId: outcome.id,
-            question: market.question,
-            estimateProbability: estimate.probability,
-            marketPriceAtTrade: outcome.currentPrice,
-            edge: signal.edge,
-            sizeInTokens: 0,
-            reasoning: estimate.reasoning,
-            status: "skipped",
-            skipReason: "sizing came out below minimum (exposure caps reached or edge too thin)",
-          });
-          continue;
-        }
+      // Step 2: Pick ONLY the SINGLE BEST outcome with the MAX positive edge
+      if (signals.length === 0) continue;
 
-        console.log(`  Executing buy for ${sized.sizeInTokens} TST...`);
-        const result = await executeTrade(sized);
-        dailyExposureUsed += sized.sizeInTokens;
+      signals.sort((a, b) => b.signal.edge - a.signal.edge);
+      const best = signals[0];
 
+      console.log(`  -> Selected Best Single Outcome: "${best.outcome.label}" with Max Edge: ${(best.signal.edge * 100).toFixed(1)}%`);
+
+      const sized = sizeTrade(best.signal, bankroll, dailyExposureUsed);
+      if (!sized) {
         await logDecision({
           timestamp: new Date().toISOString(),
           marketId: market.id,
-          outcomeId: outcome.id,
+          outcomeId: best.outcome.id,
           question: market.question,
-          estimateProbability: estimate.probability,
-          marketPriceAtTrade: outcome.currentPrice,
-          edge: signal.edge,
-          sizeInTokens: sized.sizeInTokens,
-          reasoning: estimate.reasoning,
-          txHash: result.txHash,
-          status: result.skipped ? "skipped" : "placed",
-          skipReason: result.reason,
+          estimateProbability: best.signal.estimate.probability,
+          marketPriceAtTrade: best.outcome.currentPrice,
+          edge: best.signal.edge,
+          sizeInTokens: 0,
+          reasoning: best.signal.estimate.reasoning,
+          status: "skipped",
+          skipReason: "sizing came out below minimum (exposure caps reached or edge too thin)",
         });
-
-        console.log(
-          `  [${result.skipped ? "SKIPPED" : "TRADED"}] ${market.question} -> ${outcome.label} | ` +
-            `txHash=${result.txHash || "N/A"}`
-        );
+        continue;
       }
+
+      console.log(`  Executing buy for ${sized.sizeInTokens} TST on best outcome "${best.outcome.label}"...`);
+      const result = await executeTrade(sized);
+      dailyExposureUsed += sized.sizeInTokens;
+
+      await logDecision({
+        timestamp: new Date().toISOString(),
+        marketId: market.id,
+        outcomeId: best.outcome.id,
+        question: market.question,
+        estimateProbability: best.signal.estimate.probability,
+        marketPriceAtTrade: best.outcome.currentPrice,
+        edge: best.signal.edge,
+        sizeInTokens: sized.sizeInTokens,
+        reasoning: best.signal.estimate.reasoning,
+        txHash: result.txHash,
+        status: result.skipped ? "skipped" : "placed",
+        skipReason: result.reason,
+      });
+
+      console.log(
+        `  [${result.skipped ? "SKIPPED" : "TRADED"}] ${market.question} -> ${best.outcome.label} | ` +
+          `txHash=${result.txHash || "N/A"}`
+      );
     } catch (marketErr) {
       console.error(`[Market Error] Skipping market ${market.id} due to unexpected error:`, marketErr);
     }
@@ -188,4 +202,3 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     process.exit(1);
   });
 }
-
