@@ -81,7 +81,7 @@ async function getBankroll(): Promise<number> {
   }
 }
 
-async function runOnce(): Promise<void> {
+export async function runOnce(): Promise<void> {
   console.log("=== Delphi Agent Arena — Trading Run ===");
   console.log("Time:", new Date().toISOString());
 
@@ -182,7 +182,10 @@ async function runOnce(): Promise<void> {
   console.log("\n=== Run Complete ===");
 }
 
-runOnce().catch((err) => {
-  console.error("Trade loop failed:", err);
-  process.exit(1);
-});
+if (import.meta.url === `file://${process.argv[1]}`) {
+  runOnce().catch((err) => {
+    console.error("Trade loop failed:", err);
+    process.exit(1);
+  });
+}
+
