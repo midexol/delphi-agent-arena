@@ -1,6 +1,16 @@
 import { runOnce } from "./index.js";
+import http from "node:http";
 
 const LOOP_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const PORT = process.env.PORT || 3000;
+
+// Lightweight HTTP Health Check Server so Render/Railway keep-alive pings keep it awake 24/7
+http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Delphi Agent Arena Trading Bot Active 24/7\n");
+}).listen(PORT, () => {
+  console.log(`Keep-alive health server listening on port ${PORT}`);
+});
 
 async function startContinuousLoop() {
   console.log("==================================================");
