@@ -196,9 +196,7 @@ export async function runOnce(): Promise<void> {
   console.log("\n=== Run Complete ===");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runOnce().catch((err) => {
-    console.error("Trade loop failed:", err);
-    process.exit(1);
-  });
-}
+runOnce().catch((err) => {
+  console.error("Trade loop failed:", err);
+  process.exit(1);
+});
