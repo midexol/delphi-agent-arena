@@ -83,7 +83,7 @@ async function getBankroll(): Promise<number> {
 }
 
 export async function runOnce(): Promise<void> {
-  console.log("=== Delphi Agent Arena — High-Precision Pure-Gain Run ===");
+  console.log("=== Delphi Agent Arena — Position Stacking Rank #1 Challenger Run ===");
   console.log("Time:", new Date().toISOString());
 
   console.log("\n1. Sweeping & redeeming settled/expired positions...");
@@ -98,27 +98,10 @@ export async function runOnce(): Promise<void> {
   const bankroll = await getBankroll();
   let dailyExposureUsed = 0;
 
-  const client = getDelphiClient();
-  const { address: walletAddr } = await client.getSigner();
-  const { positions: openPositions } = await client.listPositions({ wallet: walletAddr, redeemedOrLiquidated: false });
-
-  // Map existing active position market proxy addresses
-  const activeMarketProxies = new Set(
-    (openPositions || [])
-      .filter((p) => BigInt(p.shares || "0") > 0n)
-      .map((p) => p.marketProxy.toLowerCase())
-  );
-
-  console.log("\n4. Evaluating markets (Strict Single-Outcome Max-Edge Execution)...");
+  console.log("\n4. Evaluating markets (Alpha Position-Stacking Single-Outcome Execution)...");
   for (const market of markets) {
     try {
       console.log(`\nEvaluating Market: [${market.id}] "${market.question}"`);
-
-      // Skip if we already hold an active position in this market to avoid duplicate over-exposure
-      if (activeMarketProxies.has(market.id.toLowerCase())) {
-        console.log(`  [SKIP MARKET] Already hold an active position in market ${market.id}.`);
-        continue;
-      }
 
       const signals: { signal: EdgeSignal; outcome: any }[] = [];
 
@@ -165,7 +148,7 @@ export async function runOnce(): Promise<void> {
         continue;
       }
 
-      console.log(`  Executing buy for ${sized.sizeInTokens} TST on best outcome "${best.outcome.label}"...`);
+      console.log(`  Executing buy/top-up for ${sized.sizeInTokens} TST on best outcome "${best.outcome.label}"...`);
       const result = await executeTrade(sized);
       dailyExposureUsed += sized.sizeInTokens;
 
