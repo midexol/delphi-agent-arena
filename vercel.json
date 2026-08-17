@@ -1,8 +1,9 @@
 {
+  "outputDirectory": ".",
   "crons": [
     {
       "path": "/api/trade",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }
